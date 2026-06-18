@@ -384,9 +384,12 @@
   .tool-opt:active{cursor:grabbing}
   .tool-opt .to-dot{
     width:22px;height:22px;border-radius:50%;flex-shrink:0;
-    background:radial-gradient(circle at 35% 30%,#aedb7e,#6aa53a 72%);
     display:flex;align-items:center;justify-content:center;color:#fff;
+    background:radial-gradient(circle at 35% 30%,#aedb7e,#6aa53a 72%);
   }
+  .tool-opt .to-dot.sup{background:radial-gradient(circle at 35% 30%,#6cc4f2,#2b9bdf 72%)}
+  .tool-opt .to-dot.sub{background:radial-gradient(circle at 35% 30%,#f5b07a,#e8632a 72%)}
+  .tool-opt .to-dot.tool{background:radial-gradient(circle at 35% 30%,#aedb7e,#6aa53a 72%)}
   .tool-opt .to-dot svg{width:11px;height:11px}
   .tool-opt .to-txt b{font-size:12.5px;font-weight:600;display:block;line-height:1.2}
   .tool-opt .to-txt span{font-size:10.5px;color:var(--txt-mut)}
@@ -718,13 +721,19 @@
         <h3>Blocos</h3>
         <p class="dh">Arraste para o board para montar seu fluxo de agentes.</p>
         <div class="palette">
-          <div class="palette-item" draggable="true" data-type="supervisor" id="paletteSup">
-            <div class="pi-dot sup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></div>
-            <div class="pi-txt"><b>Supervisor</b><span>Orquestra o atendimento</span></div>
+          <div class="tool-slot">
+            <div class="palette-item" draggable="true" data-type="supervisor" id="paletteSup">
+              <div class="pi-dot sup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></div>
+              <div class="pi-txt"><b>Supervisor</b><span id="supSlotHint">Orquestra o atendimento</span></div>
+            </div>
+            <div class="tool-menu" id="supMenu"></div>
           </div>
-          <div class="palette-item" draggable="true" data-type="subagent">
-            <div class="pi-dot sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></div>
-            <div class="pi-txt"><b>Sub-agente</b><span>Especialista numa tarefa</span></div>
+          <div class="tool-slot">
+            <div class="palette-item" draggable="true" data-type="subagent" id="paletteSub">
+              <div class="pi-dot sub"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg></div>
+              <div class="pi-txt"><b>Sub-agente</b><span id="subSlotHint">Especialista numa tarefa</span></div>
+            </div>
+            <div class="tool-menu" id="subMenu"></div>
           </div>
           <div class="tool-slot">
             <div class="palette-item" draggable="true" data-type="tool" id="paletteTool">
@@ -995,10 +1004,28 @@
   let flowSeq = 0;
   let currentFlowId = null;
 
-  // catálogo global de tools reutilizáveis: [{id,name,desc,workspace}]
-  let toolCatalog = [];
-  let toolCatSeq = 0;
-  let pendingToolId = null; // tool do catálogo escolhida para o próximo drop
+  // catálogo global de blocos reutilizáveis (compartilhados entre fluxos)
+  // catalog[type] = [ {id, data:{...}} ]  — a data é a fonte de verdade
+  const catalog = { supervisor:[], subagent:[], tool:[] };
+  let catSeq = 0;
+  let pendingCatId = null;  // entrada do catálogo escolhida para o próximo drop
+
+  const TYPE_META = {
+    supervisor:{ slot:'supSlotHint', menu:'supMenu', palette:'paletteSup', base:'Orquestra o atendimento',
+      icon:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>', dotClass:'sup', noun:'supervisores' },
+    subagent:{ slot:'subSlotHint', menu:'subMenu', palette:'paletteSub', base:'Especialista numa tarefa',
+      icon:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>', dotClass:'sub', noun:'sub-agentes' },
+    tool:{ slot:'toolSlotHint', menu:'toolMenu', palette:'paletteTool', base:'Ação ou integração',
+      icon:'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>', dotClass:'tool', noun:'tools' }
+  };
+
+  function catEntry(catId){
+    for(const t in catalog){ const e=catalog[t].find(x=>x.id===catId); if(e) return e; }
+    return null;
+  }
+  function catLabel(entry, type){
+    return entry.data.name || ({supervisor:'Supervisor',subagent:'Sub-agente',tool:'Tool'})[type];
+  }
 
   function applyTransform(){
     viewport.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
@@ -1006,13 +1033,11 @@
     canvas.style.backgroundSize = `${22*zoom}px ${22*zoom}px`;
     document.getElementById('zoomReset').textContent = Math.round(zoom*100)+'%';
   }
-  // converte coordenada de tela -> coordenada do mundo (dentro do viewport)
   function screenToWorld(clientX, clientY){
     const r = canvas.getBoundingClientRect();
     return { x:(clientX-r.left-panX)/zoom, y:(clientY-r.top-panY)/zoom };
   }
 
-  // limpa o board (sem mexer no array flows)
   function resetBoard(){
     nodes.slice().forEach(n=>n.el.remove());
     nodes=[]; edges=[]; nodeSeq=0;
@@ -1021,7 +1046,6 @@
     applyTransform(); refreshPalette(); updateHint();
   }
 
-  // abrir / fechar builder
   document.getElementById('ctaManual').addEventListener('click', ()=>startNewFlow());
   document.getElementById('ddNewFlow').addEventListener('click', ()=>startNewFlow());
   document.getElementById('backBtn').addEventListener('click', closeBuilder);
@@ -1036,71 +1060,75 @@
     document.getElementById('builderTitle').textContent = 'Novo fluxo de agentes';
     openBuilder();
   }
-  function openBuilder(){ mainView.style.display='none'; builder.classList.add('active'); updateToolSlotHint(); toolMenu.classList.remove('open'); }
+  function openBuilder(){ mainView.style.display='none'; builder.classList.add('active'); refreshSlots(); closeMenus(); }
   function closeBuilder(){ builder.classList.remove('active'); mainView.style.display='block'; renderMain(); }
 
-  // ---- DRAG da gaveta ----
+  // ---- DRAG / menus da gaveta ----
+  const paletteSub = document.getElementById('paletteSub');
   const paletteTool = document.getElementById('paletteTool');
-  const toolMenu = document.getElementById('toolMenu');
+
+  function closeMenus(){ document.querySelectorAll('.tool-menu').forEach(m=>m.classList.remove('open')); }
 
   document.querySelectorAll('.palette-item').forEach(item=>{
+    const type=item.dataset.type;
     item.addEventListener('dragstart', e=>{
       if(item.classList.contains('dim')){ e.preventDefault(); return; }
-      // o bloco Tool, quando há catálogo, não arrasta direto (abre o menu)
-      if(item===paletteTool && toolCatalog.length>0){ e.preventDefault(); return; }
-      pendingToolId = null; // tool nova
-      e.dataTransfer.setData('type', item.dataset.type);
+      // se há itens no catálogo desse tipo, o bloco abre menu em vez de arrastar direto
+      if(catalog[type].length>0){ e.preventDefault(); return; }
+      pendingCatId = null; // bloco novo
+      e.dataTransfer.setData('type', type);
       e.dataTransfer.effectAllowed='copy';
     });
+    item.addEventListener('click', e=>{
+      if(catalog[type].length===0) return; // sem catálogo: deixa o drag direto funcionar
+      e.stopPropagation();
+      buildMenu(type);
+      const menu=document.getElementById(TYPE_META[type].menu);
+      const wasOpen=menu.classList.contains('open');
+      closeMenus();
+      if(!wasOpen) menu.classList.add('open');
+    });
   });
+  document.addEventListener('click', e=>{ if(!e.target.closest('.tool-slot')) closeMenus(); });
 
-  // clique no bloco Tool: abre o menu se houver tools criadas
-  paletteTool.addEventListener('click', e=>{
-    if(toolCatalog.length===0) return; // sem catálogo: comporta como drag normal
-    e.stopPropagation();
-    buildToolMenu();
-    toolMenu.classList.toggle('open');
-  });
-  document.addEventListener('click', e=>{
-    if(!e.target.closest('.tool-slot')) toolMenu.classList.remove('open');
-  });
-
-  function updateToolSlotHint(){
-    const hint=document.getElementById('toolSlotHint');
-    if(toolCatalog.length>0){
-      hint.textContent = toolCatalog.length+' criada'+(toolCatalog.length>1?'s':'')+' — clique para escolher';
-    } else {
-      hint.textContent = 'Ação ou integração';
-    }
+  function refreshSlots(){ Object.keys(TYPE_META).forEach(updateSlotHint); }
+  function updateSlotHint(type){
+    const hint=document.getElementById(TYPE_META[type].slot);
+    const n=catalog[type].length;
+    hint.textContent = n>0 ? (n+' criado'+(n>1?'s':'')+' — clique para escolher') : TYPE_META[type].base;
   }
 
-  function buildToolMenu(){
-    toolMenu.innerHTML = '<div class="tm-head">Tools criadas — arraste para o board</div>';
-    toolCatalog.forEach(t=>{
+  function buildMenu(type){
+    const meta=TYPE_META[type];
+    const menu=document.getElementById(meta.menu);
+    menu.innerHTML = '<div class="tm-head">'+meta.noun+' — arraste para o board</div>';
+    catalog[type].forEach(entry=>{
       const opt=document.createElement('div');
       opt.className='tool-opt'; opt.setAttribute('draggable','true');
+      const sub = type==='tool' ? (entry.data.workspace||'sem workspace')
+                : type==='subagent' ? (entry.data.tag||'sem tag')
+                : 'supervisor';
       opt.innerHTML =
-        '<div class="to-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>'+
-        '<div class="to-txt"><b>'+escapeHtml(t.name||'Tool')+'</b><span>'+escapeHtml(t.workspace||'sem workspace')+'</span></div>';
+        '<div class="to-dot '+meta.dotClass+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+meta.icon+'</svg></div>'+
+        '<div class="to-txt"><b>'+escapeHtml(catLabel(entry,type))+'</b><span>'+escapeHtml(sub)+'</span></div>';
       opt.addEventListener('dragstart', ev=>{
-        pendingToolId = t.id;
-        ev.dataTransfer.setData('type','tool');
+        pendingCatId = entry.id;
+        ev.dataTransfer.setData('type', type);
         ev.dataTransfer.effectAllowed='copy';
       });
-      toolMenu.appendChild(opt);
+      menu.appendChild(opt);
     });
-    // opção criar nova
     const neu=document.createElement('div');
     neu.className='tool-opt new'; neu.setAttribute('draggable','true');
     neu.innerHTML =
       '<div class="to-dot"><span class="plus">+</span></div>'+
-      '<div class="to-txt"><b>Criar tool nova</b><span>Arraste para o board</span></div>';
+      '<div class="to-txt"><b>Criar '+({supervisor:'supervisor novo',subagent:'sub-agente novo',tool:'tool nova'}[type])+'</b><span>Arraste para o board</span></div>';
     neu.addEventListener('dragstart', ev=>{
-      pendingToolId = null;
-      ev.dataTransfer.setData('type','tool');
+      pendingCatId = null;
+      ev.dataTransfer.setData('type', type);
       ev.dataTransfer.effectAllowed='copy';
     });
-    toolMenu.appendChild(neu);
+    menu.appendChild(neu);
   }
 
   canvas.addEventListener('dragover', e=>{ e.preventDefault(); canvas.classList.add('dragover'); });
@@ -1110,18 +1138,24 @@
     const type = e.dataTransfer.getData('type');
     if(!type) return;
     if(type==='supervisor' && nodes.some(n=>n.type==='supervisor')){
-      showToast('Só pode existir 1 supervisor no board'); return;
+      showToast('Só pode existir 1 supervisor no board'); pendingCatId=null; return;
+    }
+    // evita duplicar o mesmo bloco do catálogo no mesmo board
+    if(pendingCatId && nodes.some(n=>n.catId===pendingCatId)){
+      showToast('Esse bloco já está neste fluxo'); pendingCatId=null; closeMenus(); return;
     }
     const w = screenToWorld(e.clientX, e.clientY);
-    if(type==='tool' && pendingToolId){
-      // instancia uma tool já existente do catálogo (já vem "iniciada")
-      const t = toolCatalog.find(t=>t.id===pendingToolId);
-      addNode('tool', w.x, w.y, { data:{ name:t.name, desc:t.desc, workspace:t.workspace, started:true, catId:t.id } });
+    if(pendingCatId){
+      addNode(type, w.x, w.y, { catId:pendingCatId });   // instância de bloco existente
     } else {
-      addNode(type, w.x, w.y);
+      // bloco novo: cria entrada no catálogo
+      const id='cat'+(++catSeq);
+      const data={name:'',tone:'',desc:'',tag:'',behavior:'',workspace:'',started:false};
+      catalog[type].push({id,data});
+      addNode(type, w.x, w.y, { catId:id, fresh:true });
     }
-    pendingToolId = null;
-    toolMenu.classList.remove('open');
+    pendingCatId = null;
+    closeMenus();
   });
 
   function refreshPalette(){
@@ -1133,11 +1167,14 @@
 
   // ---- criar nó ----
   function addNode(type,x,y,preset){
-    const id = (preset && preset.id) || 'n'+(++nodeSeq);
-    if(preset && preset.id){
-      const num=parseInt(preset.id.slice(1),10);
+    preset = preset || {};
+    const id = preset.nodeId || 'n'+(++nodeSeq);
+    if(preset.nodeId){
+      const num=parseInt(preset.nodeId.slice(1),10);
       if(!isNaN(num) && num>nodeSeq) nodeSeq=num;
     }
+    const catId = preset.catId;
+    const entry = catEntry(catId);
     const el = document.createElement('div');
     el.className='node-el'; el.dataset.type=type; el.dataset.id=id;
     el.style.left=x+'px'; el.style.top=y+'px';
@@ -1146,13 +1183,12 @@
       '<div class="node-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+ICON[type]+'</svg>'+
         (type!=='tool' ? '<div class="handle"></div>' : '')+
       '</div>'+
-      '<div class="node-label">'+LABEL[type]+(type==='supervisor'?'':' '+countType(type)+1)+'</div>';
+      '<div class="node-label"></div>';
     canvas.classList.remove('panning');
     viewport.appendChild(el);
-    const data = Object.assign({name:'',tone:'',desc:'',tag:'',behavior:'',workspace:'',started:false,catId:null}, (preset&&preset.data)||{});
-    const node={id,type,x,y,el,data};
+    const node={id,type,x,y,el,catId};
     nodes.push(node);
-    if(data.name) el.querySelector('.node-label').textContent = data.name;
+    setLabel(node);
     el.querySelector('.node-del').addEventListener('click', ev=>{ ev.stopPropagation(); removeNode(id); });
     enableNodeDrag(node);
     const h = el.querySelector('.handle');
@@ -1160,6 +1196,8 @@
     el.addEventListener('mousedown', ()=>selectNode(id));
     el.addEventListener('dblclick', ev=>{ ev.stopPropagation(); openEditor(node); });
     refreshPalette(); updateHint();
+    // bloco recém-criado em branco: abre o editor na hora
+    if(preset.fresh) openEditor(node);
     return node;
   }
   function countType(type){ return nodes.filter(n=>n.type===type).length; }
@@ -1304,32 +1342,38 @@
 
   function setLabel(node){
     const lbl = node.el.querySelector('.node-label');
-    if(node.data.name) lbl.textContent = node.data.name;
+    const entry = catEntry(node.catId);
+    lbl.textContent = entry ? catLabel(entry, node.type) : LABEL[node.type];
+  }
+  // re-rotula todos os nós do board que usam a mesma entrada de catálogo
+  function relabel(catId){
+    nodes.filter(n=>n.catId===catId).forEach(setLabel);
   }
 
   function openEditor(node){
     editing = node;
+    const d = (catEntry(node.catId)||{}).data || {};
     if(node.type==='supervisor'){
-      document.getElementById('supName').value = node.data.name;
-      document.getElementById('supTone').value = node.data.tone;
+      document.getElementById('supName').value = d.name||'';
+      document.getElementById('supTone').value = d.tone||'';
       modalSup.classList.add('open');
       document.getElementById('supName').focus();
     } else if(node.type==='subagent'){
-      document.getElementById('subName').value = node.data.name;
-      document.getElementById('subDesc').value = node.data.desc;
-      document.getElementById('subTag').value  = node.data.tag;
-      document.getElementById('subBeh').value   = node.data.behavior;
+      document.getElementById('subName').value = d.name||'';
+      document.getElementById('subDesc').value = d.desc||'';
+      document.getElementById('subTag').value  = d.tag||'';
+      document.getElementById('subBeh').value   = d.behavior||'';
       modalSub.classList.add('open');
       document.getElementById('subName').focus();
     } else { // tool
-      if(node.data.started){
+      if(d.started){
         document.getElementById('toolStartedTitle').textContent =
-          node.data.name ? '“'+node.data.name+'” já iniciada' : 'Tool já iniciada';
+          d.name ? '“'+d.name+'” já iniciada' : 'Tool já iniciada';
         modalToolStarted.classList.add('open');
       } else {
-        document.getElementById('toolName').value = node.data.name;
-        document.getElementById('toolDesc').value = node.data.desc;
-        document.getElementById('toolWs').value   = node.data.workspace;
+        document.getElementById('toolName').value = d.name||'';
+        document.getElementById('toolDesc').value = d.desc||'';
+        document.getElementById('toolWs').value   = d.workspace||'';
         modalTool.classList.add('open');
         document.getElementById('toolName').focus();
       }
@@ -1340,36 +1384,39 @@
     editing = null;
   }
 
-  document.getElementById('supSave').addEventListener('click', ()=>{
+  function commitEdit(fields, toastMsg){
     if(!editing) return;
-    editing.data.name = document.getElementById('supName').value.trim();
-    editing.data.tone = document.getElementById('supTone').value.trim();
-    setLabel(editing); closeEditor(); showToast('Supervisor salvo');
+    const entry = catEntry(editing.catId);
+    if(entry) Object.assign(entry.data, fields);
+    relabel(editing.catId);
+    refreshSlots();
+    const ed=editing;
+    closeEditor();
+    showToast(toastMsg);
+    return ed;
+  }
+
+  document.getElementById('supSave').addEventListener('click', ()=>{
+    commitEdit({
+      name: document.getElementById('supName').value.trim(),
+      tone: document.getElementById('supTone').value.trim()
+    }, 'Supervisor salvo');
   });
   document.getElementById('subSave').addEventListener('click', ()=>{
-    if(!editing) return;
-    editing.data.name     = document.getElementById('subName').value.trim();
-    editing.data.desc     = document.getElementById('subDesc').value.trim();
-    editing.data.tag      = document.getElementById('subTag').value;
-    editing.data.behavior = document.getElementById('subBeh').value.trim();
-    setLabel(editing); closeEditor(); showToast('Sub-agente salvo');
+    commitEdit({
+      name: document.getElementById('subName').value.trim(),
+      desc: document.getElementById('subDesc').value.trim(),
+      tag:  document.getElementById('subTag').value,
+      behavior: document.getElementById('subBeh').value.trim()
+    }, 'Sub-agente salvo');
   });
   document.getElementById('toolSave').addEventListener('click', ()=>{
-    if(!editing) return;
-    editing.data.name      = document.getElementById('toolName').value.trim();
-    editing.data.desc      = document.getElementById('toolDesc').value.trim();
-    editing.data.workspace = document.getElementById('toolWs').value;
-    editing.data.started   = true;   // marca como iniciada
-    // registra no catálogo global de tools reutilizáveis
-    editing.data.catId = 'tc'+(++toolCatSeq);
-    toolCatalog.push({
-      id: editing.data.catId,
-      name: editing.data.name || 'Tool',
-      desc: editing.data.desc,
-      workspace: editing.data.workspace
-    });
-    updateToolSlotHint();
-    setLabel(editing); closeEditor(); showToast('Tool criada');
+    commitEdit({
+      name: document.getElementById('toolName').value.trim(),
+      desc: document.getElementById('toolDesc').value.trim(),
+      workspace: document.getElementById('toolWs').value,
+      started: true
+    }, 'Tool criada');
   });
   document.getElementById('toolEditBtn').addEventListener('click', ()=>{
     // por enquanto não faz nada (abriria a edição em nova aba)
@@ -1382,13 +1429,13 @@
   // ---- salvar / carregar fluxos ----
   function serializeBoard(){
     return {
-      nodes: nodes.map(n=>({id:n.id,type:n.type,x:n.x,y:n.y,data:Object.assign({},n.data)})),
+      nodes: nodes.map(n=>({id:n.id,type:n.type,x:n.x,y:n.y,catId:n.catId})),
       edges: edges.map(e=>({from:e.from,to:e.to,type:e.type}))
     };
   }
   function flowName(snapshot){
     const sup = snapshot.nodes.find(n=>n.type==='supervisor');
-    if(sup && sup.data.name) return sup.data.name;
+    if(sup){ const e=catEntry(sup.catId); if(e && e.data.name) return e.data.name; }
     return 'Fluxo de agentes';
   }
 
@@ -1416,7 +1463,7 @@
     if(!f) return;
     resetBoard();
     currentFlowId = id;
-    f.nodes.forEach(n=>addNode(n.type,n.x,n.y,{id:n.id,data:n.data}));
+    f.nodes.forEach(n=>addNode(n.type,n.x,n.y,{nodeId:n.id,catId:n.catId}));
     f.edges.forEach(e=>edges.push({from:e.from,to:e.to,type:e.type}));
     drawEdges();
     document.getElementById('builderTitle').textContent = f.name;
