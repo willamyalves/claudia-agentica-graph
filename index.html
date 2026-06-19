@@ -1027,6 +1027,18 @@
     return entry.data.name || ({supervisor:'Supervisor',subagent:'Sub-agente',tool:'Tool'})[type];
   }
 
+  // remove do catálogo blocos que não estão em nenhum fluxo salvo
+  // (nem no board aberto no momento, para não perder o que está em edição)
+  function gcCatalog(){
+    const used = new Set();
+    flows.forEach(f=>f.nodes.forEach(n=>{ if(n.catId) used.add(n.catId); }));
+    if(builder.classList.contains('active')) nodes.forEach(n=>{ if(n.catId) used.add(n.catId); });
+    Object.keys(catalog).forEach(t=>{
+      catalog[t] = catalog[t].filter(e=>used.has(e.id));
+    });
+    refreshSlots();
+  }
+
   function applyTransform(){
     viewport.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
     canvas.style.backgroundPosition = `${panX}px ${panY}px`;
@@ -1061,7 +1073,7 @@
     openBuilder();
   }
   function openBuilder(){ mainView.style.display='none'; builder.classList.add('active'); refreshSlots(); closeMenus(); }
-  function closeBuilder(){ builder.classList.remove('active'); mainView.style.display='block'; renderMain(); }
+  function closeBuilder(){ builder.classList.remove('active'); mainView.style.display='block'; gcCatalog(); renderMain(); }
 
   // ---- DRAG / menus da gaveta ----
   const paletteSub = document.getElementById('paletteSub');
@@ -1196,8 +1208,6 @@
     el.addEventListener('mousedown', ()=>selectNode(id));
     el.addEventListener('dblclick', ev=>{ ev.stopPropagation(); openEditor(node); });
     refreshPalette(); updateHint();
-    // bloco recém-criado em branco: abre o editor na hora
-    if(preset.fresh) openEditor(node);
     return node;
   }
   function countType(type){ return nodes.filter(n=>n.type===type).length; }
@@ -1386,6 +1396,19 @@
 
   function commitEdit(fields, toastMsg){
     if(!editing) return;
+    const type = editing.type;
+    const name = (fields.name||'').trim();
+    if(name){
+      const dup = catalog[type].some(e =>
+        e.id!==editing.catId &&
+        (e.data.name||'').trim().toLowerCase() === name.toLowerCase()
+      );
+      if(dup){
+        const noun = ({supervisor:'supervisor',subagent:'sub-agente',tool:'tool'})[type];
+        showToast('Já existe um '+noun+' com esse nome');
+        return;
+      }
+    }
     const entry = catEntry(editing.catId);
     if(entry) Object.assign(entry.data, fields);
     relabel(editing.catId);
@@ -1441,6 +1464,13 @@
 
   document.getElementById('saveFlowBtn').addEventListener('click', ()=>{
     if(nodes.length===0){ showToast('Adicione ao menos um bloco antes de salvar'); return; }
+    const sup = nodes.find(n=>n.type==='supervisor');
+    if(!sup){ showToast('Adicione um supervisor para salvar'); return; }
+    const hasAgenticFlow = edges.some(e=>{
+      const a=nodes.find(n=>n.id===e.from), b=nodes.find(n=>n.id===e.to);
+      return a && b && a.type==='supervisor' && b.type==='subagent';
+    });
+    if(!hasAgenticFlow){ showToast('Conecte o supervisor a ao menos 1 sub-agente para salvar'); return; }
     const snap = serializeBoard();
     const counts = {
       supervisor: snap.nodes.filter(n=>n.type==='supervisor').length,
@@ -1533,6 +1563,7 @@
     const id = flowToDelete.id;
     flows = flows.filter(x=>x.id!==id);
     if(currentFlowId===id) currentFlowId=null;
+    gcCatalog();
     closeDelete(); renderMain(); showToast('Fluxo excluído');
   });
   document.addEventListener('keydown', e=>{ if(e.key==='Escape' && flowToDelete) closeDelete(); });
